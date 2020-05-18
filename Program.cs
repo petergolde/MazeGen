@@ -157,12 +157,13 @@ namespace MazeGen
     class MazePixelator
     {
         Grid grid;
-        bool[,,] pixels;
+        byte[,,] pixels;
 
         const int HALFWIDTH = 2;
         const int CORRWIDTH = 7;
         const int MULTIPLIER = (HALFWIDTH * 2 + CORRWIDTH + 1);
         const int OFFSET = HALFWIDTH;
+        const bool BOUNCERS = true;
 
         Direction posX = new Direction(1, 0, 0), negX = new Direction(-1, 0, 0);
         Direction posY = new Direction(0, 1, 0), negY = new Direction(0, -1, 0);
@@ -187,53 +188,54 @@ namespace MazeGen
 
         private void FillAllPixels()
         {
-            pixels = new bool[grid.SizeX * MULTIPLIER - CORRWIDTH, grid.SizeY * MULTIPLIER - CORRWIDTH, grid.SizeZ * MULTIPLIER - CORRWIDTH];
+            pixels = new byte[grid.SizeX * MULTIPLIER - CORRWIDTH, grid.SizeY * MULTIPLIER - CORRWIDTH + 1, grid.SizeZ * MULTIPLIER - CORRWIDTH];
         }
 
-        private void SetPixel(Coord pixCoord, Direction d, int distance)
-        {
-            pixCoord = pixCoord.Move(d, distance);
-            SetPixel(pixCoord);
-        }
-
-        private void SetPixel(Coord pixCoord)
+        private void SetPixel(Coord pixCoord, byte value)
         {
             if (pixCoord.X >= 0 && pixCoord.X < pixels.GetLength(0) && pixCoord.Y >= 0 && pixCoord.Y < pixels.GetLength(1) && pixCoord.Z >= 0 && pixCoord.Z < pixels.GetLength(2)) {
-                pixels[pixCoord.X, pixCoord.Y, pixCoord.Z] = true;
+                pixels[pixCoord.X, pixCoord.Y, pixCoord.Z] = value;
             }
         }
 
 
         private void DrawCell(Coord mazeCoord)
         {
-            Coord pixCoord = new Coord(mazeCoord.X * MULTIPLIER + OFFSET, mazeCoord.Y * MULTIPLIER + OFFSET, mazeCoord.Z * MULTIPLIER + OFFSET);
+            Coord pixCoord = new Coord(mazeCoord.X * MULTIPLIER + OFFSET, mazeCoord.Y * MULTIPLIER + OFFSET + 1, mazeCoord.Z * MULTIPLIER + OFFSET);
 
             Cell cell = grid[mazeCoord];
 
             foreach (Direction d in allDirections) {
-                if (cell.GetPassage(d))
-                    DrawPassage(pixCoord, d);
-                else
-                    DrawWall(pixCoord, d);
+                if (cell.GetPassage(d)) {
+                    DrawPassage(pixCoord, cell, d);
+                }
+                else {
+                    if (BOUNCERS && d.Dy == -1 && cell.GetPassage(d.Opposite)) {
+                        DrawBouncer(pixCoord, cell, d);
+                    }
+                    else {
+                        DrawWall(pixCoord, cell, d);
+                    }
+                }
             }
         }
 
-        private void DrawPassage(Coord pixCoord, Direction d)
+        private void DrawPassage(Coord pixCoord, Cell cell, Direction d)
         {
             Direction perp1, perp2;
             d.TwoPerpendicular(out perp1, out perp2);
 
             for (int l = HALFWIDTH; l <= HALFWIDTH + CORRWIDTH + 1; ++l) {
                 for (int i = -HALFWIDTH; i <= HALFWIDTH; ++i) {
-                    SetPixel(pixCoord.Move(d, l).Move(perp1, HALFWIDTH).Move(perp2, i));
-                    SetPixel(pixCoord.Move(d, l).Move(perp1.Opposite, HALFWIDTH).Move(perp2, i));
-                    SetPixel(pixCoord.Move(d, l).Move(perp2, HALFWIDTH).Move(perp1, i));
-                    SetPixel(pixCoord.Move(d, l).Move(perp2.Opposite, HALFWIDTH).Move(perp1, i));
+                    SetPixel(pixCoord.Move(d, l).Move(perp1, HALFWIDTH).Move(perp2, i), 1);
+                    SetPixel(pixCoord.Move(d, l).Move(perp1.Opposite, HALFWIDTH).Move(perp2, i), 1);
+                    SetPixel(pixCoord.Move(d, l).Move(perp2, HALFWIDTH).Move(perp1, i), 1);
+                    SetPixel(pixCoord.Move(d, l).Move(perp2.Opposite, HALFWIDTH).Move(perp1, i), 1);
                 }
             }
         }
 
-        private void DrawWall(Coord pixCoord, Direction d)
+        private void DrawWall(Coord pixCoord, Cell cell, Direction d)
         {
             Coord wallCenter = pixCoord.Move(d, HALFWIDTH);
 
@@ -242,17 +244,33 @@ namespace MazeGen
 
             for (int i = -HALFWIDTH; i <= HALFWIDTH; ++i) {
                 for (int j = -HALFWIDTH; j <= HALFWIDTH; ++j) {
-                    SetPixel(wallCenter.Move(perp1, i).Move(perp2, j));
+                    SetPixel(wallCenter.Move(perp1, i).Move(perp2, j), 1);
                 }
             }
         }
+
+        private void DrawBouncer(Coord pixCoord, Cell cell, Direction d)
+        {
+            Coord wallCenter = pixCoord.Move(d, HALFWIDTH);
+
+            Direction perp1, perp2;
+            d.TwoPerpendicular(out perp1, out perp2);
+
+            for (int i = -(HALFWIDTH - 1); i <= (HALFWIDTH - 1); ++i) {
+                for (int j = -(HALFWIDTH - 1); j <= (HALFWIDTH - 1); ++j) {
+                    SetPixel(wallCenter.Move(perp1, i).Move(perp2, j), 2);
+                    SetPixel(wallCenter.Move(d, 1).Move(perp1, i).Move(perp2, j), 1);
+                }
+            }
+        }
+
 
         private void OutputPixels()
         {
             for (int z = 0; z < pixels.GetLength(2); ++z) {
                 for (int y = 0; y < pixels.GetLength(1); ++y) {
                     for (int x = 0; x < pixels.GetLength(0); ++x) {
-                        Console.Write(pixels[x, y, z] ? "##" : "  ");
+                        Console.Write(pixels[x, y, z] > 0 ? "##" : "  ");
                     }
                     Console.WriteLine();
                 }
@@ -279,7 +297,7 @@ namespace MazeGen
                 for (int y = 0; y < pixels.GetLength(1); ++y) {
                     StringBuilder strBuilder = new StringBuilder();
                     for (int z = 0; z < pixels.GetLength(2); ++z) {
-                        strBuilder.Append(pixels[x, y, z] ? '1' : '0');
+                        strBuilder.Append(pixels[x, y, z]);
                     }
 
                     writer.WriteStringValue(strBuilder.ToString());
